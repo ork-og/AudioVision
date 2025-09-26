@@ -678,8 +678,24 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             self.draw_placeholder()
 
     # ---------- Экспорт MP4 ----------
+    def qimage_to_bgr_safe(self, qimg: QtGui.QImage) -> np.ndarray:
+        """
+        Корректно вытаскивает пиксели из QImage (RGB888), учитывая bytesPerLine (выравнивание).
+        Возвращает NumPy массив BGR (uint8) формы (h, w, 3).
+        """
+        qimg = qimg.convertToFormat(QtGui.QImage.Format_RGB888)
+        w = qimg.width()
+        h = qimg.height()
+        bpl = qimg.bytesPerLine()
+        ptr = qimg.bits()
+        ptr.setsize(bpl * h)
+        buf = np.frombuffer(ptr, np.uint8).reshape((h, bpl))
+        rgb = buf[:, : w * 3].reshape((h, w, 3))
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        return bgr
+
     def export_mp4(self):
-        if (self.cap is None) and (self.still_image_bgr is None):
+        if (self.cap is None) and (getattr(self, "still_image_bgr", None) is None):
             QtWidgets.QMessageBox.information(self, "Нет источника", "Сначала загрузите видео или картинку.")
             return
         if self.audio_path is None:
@@ -766,11 +782,8 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
                         self.draw_circle(painter, w, h, vals)
                 painter.end()
 
-                # обратно в BGR для записи
-                ptr = qimg.bits()
-                ptr.setsize(h * w * 3)
-                arr = np.frombuffer(ptr, np.uint8).reshape((h, w, 3))
-                frame_bgr_out = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+                # обратно в BGR для записи (без «наклонов»)
+                frame_bgr_out = self.qimage_to_bgr_safe(qimg)
                 vw.write(frame_bgr_out)
 
                 if i % 5 == 0:
@@ -782,7 +795,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             # Рендер повторяющегося кадра-картинки
             base_bgr = self.still_image_bgr
             for i in range(n_frames):
-                # отрисовка выбранной визуализации поверх статичной картинки
                 frame_rgb = cv2.cvtColor(base_bgr, cv2.COLOR_BGR2RGB)
                 qimg = QtGui.QImage(frame_rgb.data, w, h, 3 * w, QtGui.QImage.Format_RGB888).copy()
                 painter = QtGui.QPainter(qimg)
@@ -796,10 +808,7 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
                         self.draw_circle(painter, w, h, vals)
                 painter.end()
 
-                ptr = qimg.bits()
-                ptr.setsize(h * w * 3)
-                arr = np.frombuffer(ptr, np.uint8).reshape((h, w, 3))
-                frame_bgr_out = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+                frame_bgr_out = self.qimage_to_bgr_safe(qimg)
                 vw.write(frame_bgr_out)
 
                 if i % 50 == 0:
@@ -819,32 +828,28 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             return
 
         # --- Сведение через ffmpeg ---
-        # Важно: явно указываем маппинг потоков, кодеки и -shortest.
         cmd = [
             ffmpeg_bin, "-y",
             "-i", tmp_video,
             "-i", self.audio_path,
             "-map", "0:v:0",  # видео из первого входа
             "-map", "1:a:0",  # аудио из второго входа
-            "-c:v", "copy",  # видео копируем (без повторной компрессии)
-            "-c:a", "aac",  # перекодируем аудио в AAC
+            "-c:v", "copy",  # видео копируем (без рекодирования)
+            "-c:a", "aac",  # аудио в AAC
             "-b:a", "192k",
-            "-shortest",  # обрезаем по корочеcму потоку
+            "-shortest",  # обрезаем по более короткому потоку
             out_path
         ]
 
         try:
-            # stdout/stderr ловим для диагностики
-            proc = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except subprocess.CalledProcessError as e:
-            # Покажем stderr ffmpeg — поможет понять, что именно ему не понравилось
             QtWidgets.QMessageBox.critical(
                 self, "Ошибка ffmpeg",
                 "ffmpeg не смог собрать видео с аудио.\n\n"
                 f"Команда:\n{' '.join(cmd)}\n\n"
                 f"stderr:\n{e.stderr.decode(errors='ignore')[:2000]}"
             )
-            # оставим временные файлы для разбора
             return
         finally:
             try:
