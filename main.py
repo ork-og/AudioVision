@@ -374,6 +374,8 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         r_inner = int(0.12 * h)
         max_len = int(0.16 * h)
 
+        #jjj
+
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
         # Базовое тонкое кольцо
