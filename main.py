@@ -58,8 +58,6 @@ def read_wav_mono(path):
         data = data.reshape(-1, n_channels)
         data = data.mean(axis=1)
 
-    #ghfh
-
     return data.astype(np.float32), sr
 
 
@@ -128,6 +126,30 @@ def make_bar_features(audio, sr, fps, n_bins=32, ref_median_frames=60):
     return bars
 
 
+# ### NEW: центры полос + утилиты цвета/пера
+def build_bandplan(sr, n_bins, f_min=20.0, f_max_limit=16000.0):
+    """
+    Возвращает (edges, centers) для полос визуализации, чтобы знать частоты каждого бина.
+    """
+    f_max = min(sr / 2.0, f_max_limit)
+    edges = np.geomspace(f_min, f_max, n_bins + 1)
+    centers = np.sqrt(edges[:-1] * edges[1:])
+    return edges.astype(np.float32), centers.astype(np.float32)
+
+
+def qcolor(r, g, b, a=255):
+    c = QtGui.QColor(int(r), int(g), int(b), int(a))
+    return c
+
+
+def color_to_pen(c: QtGui.QColor, alpha=255, width=2):
+    cc = QtGui.QColor(c)
+    cc.setAlpha(int(alpha))
+    pen = QtGui.QPen(cc)
+    pen.setWidth(int(width))
+    return pen
+
+
 # ---------------------------
 # ГЛАВНОЕ ОКНО ПРИЛОЖЕНИЯ
 # ---------------------------
@@ -156,10 +178,20 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.combo_vis = QtWidgets.QComboBox()
         self.combo_vis.addItems(["Столбцы", "Пульсирующая окружность"])  # bars / ring
 
-        # Кнопка выбора цвета визуализации
+        # Кнопка выбора цвета визуализации (общая, для вспомогательных элементов)
         self.btn_color = QtWidgets.QPushButton("Цвет…")
         self.vis_color = QtGui.QColor(255, 255, 255)
         self._apply_btn_color_style()
+
+        # ### NEW: Кнопки цветов для групп
+        self.btn_col_bass = QtWidgets.QPushButton("Бас/Кик")
+        self.btn_col_low  = QtWidgets.QPushButton("Низы")
+        self.btn_col_mid  = QtWidgets.QPushButton("Средние")
+        self.btn_col_high = QtWidgets.QPushButton("ВЧ")
+        self.btn_col_top  = QtWidgets.QPushButton("СверхВЧ")
+
+        # будет обновлено стилем после инициализации цветов в состоянии (ниже)
+        # пока стили применим чуть позже (после состояния)
 
         self.slider_speed = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.slider_speed.setRange(50, 200)
@@ -178,6 +210,13 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         controls.addWidget(self.btn_play)
         controls.addWidget(self.btn_export)
         controls.addWidget(self.btn_color)
+        # ### NEW: панель быстрого выбора цветов диапазонов
+        controls.addWidget(self.btn_col_bass)
+        controls.addWidget(self.btn_col_low)
+        controls.addWidget(self.btn_col_mid)
+        controls.addWidget(self.btn_col_high)
+        controls.addWidget(self.btn_col_top)
+
         controls.addStretch(1)
         controls.addWidget(QtWidgets.QLabel("Визуализация:"))
         controls.addWidget(self.combo_vis)
@@ -211,6 +250,28 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         # Хранилище для статичной картинки (фон)
         self.still_image_bgr = None  # np.ndarray HxWx3 uint8
 
+        # ### NEW: Частотные данные и цвета по группам
+        self.band_edges = None
+        self.band_centers = None
+
+        self.freq_split = {
+            "basskick_max": 100.0,
+            "low_max":      500.0,
+            "mid_max":      2000.0,
+            "high_max":     6000.0,
+        }
+        self.color_basskick = qcolor(255, 94, 168)
+        self.color_low     = qcolor(50, 140, 255)
+        self.color_mid     = qcolor(72, 245, 139)
+        self.color_high    = qcolor(255, 217, 102)
+        self.color_ultra   = qcolor(255, 255, 255)
+
+        self.width_basskick = 6
+        self.width_low      = 4
+        self.width_mid      = 3
+        self.width_high     = 2
+        self.width_ultra    = 1
+
         # Сигналы
         self.btn_load_video.clicked.connect(self.load_video)
         self.btn_load_image.clicked.connect(self.load_image)
@@ -221,6 +282,23 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.combo_vis.currentIndexChanged.connect(self.on_vis_changed)
         self.btn_export.clicked.connect(self.export_mp4)
         self.btn_color.clicked.connect(self.choose_vis_color)
+
+        # ### NEW: прикрепим обработчики выбора цвета для групп
+        self.btn_col_bass.clicked.connect(lambda: self._choose_group_color('bass'))
+        self.btn_col_low.clicked.connect(lambda: self._choose_group_color('low'))
+        self.btn_col_mid.clicked.connect(lambda: self._choose_group_color('mid'))
+        self.btn_col_high.clicked.connect(lambda: self._choose_group_color('high'))
+        self.btn_col_top.clicked.connect(lambda: self._choose_group_color('ultra'))
+
+        # И сразу применим стили на кнопки групп
+        for b, c in [
+            (self.btn_col_bass, self.color_basskick),
+            (self.btn_col_low,  self.color_low),
+            (self.btn_col_mid,  self.color_mid),
+            (self.btn_col_high, self.color_high),
+            (self.btn_col_top,  self.color_ultra),
+        ]:
+            self._refresh_group_btn(b, c)
 
     def _settings(self) -> QSettings:
         return QSettings("YourOrg", "VideoAudioVisualizer")
@@ -332,12 +410,59 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             f"QPushButton:hover{{filter: brightness(1.08);}}"
         )
 
+    def _refresh_group_btn(self, btn, color):
+        btn.setStyleSheet(
+            f"QPushButton{{padding:6px 10px; border-radius:6px; border:1px solid #444;"
+            f"background-color: rgba({color.red()},{color.green()},{color.blue()},255); color: #000;}}"
+            f"QPushButton:hover{{filter: brightness(1.08);}}"
+        )
+
+    def _choose_group_color(self, which: str):
+        cur = {
+            'bass': self.color_basskick,
+            'low':  self.color_low,
+            'mid':  self.color_mid,
+            'high': self.color_high,
+            'ultra':self.color_ultra
+        }[which]
+        c = QtWidgets.QColorDialog.getColor(cur, self, "Цвет диапазона")
+        if not c.isValid():
+            return
+        if which == 'bass':
+            self.color_basskick = c
+            self._refresh_group_btn(self.btn_col_bass, c)
+        elif which == 'low':
+            self.color_low = c
+            self._refresh_group_btn(self.btn_col_low, c)
+        elif which == 'mid':
+            self.color_mid = c
+            self._refresh_group_btn(self.btn_col_mid, c)
+        elif which == 'high':
+            self.color_high = c
+            self._refresh_group_btn(self.btn_col_high, c)
+        else:
+            self.color_ultra = c
+            self._refresh_group_btn(self.btn_col_top, c)
+        self.on_vis_changed(0)
+
     def choose_vis_color(self):
         c = QtWidgets.QColorDialog.getColor(self.vis_color, self, "Выберите цвет визуализации")
         if c.isValid():
             self.vis_color = c
             self._apply_btn_color_style()
             self.on_vis_changed(0)
+
+    def _color_and_width_by_freq(self, f_hz: float):
+        if f_hz <= self.freq_split["basskick_max"]:
+            return self.color_basskick, self.width_basskick
+        elif f_hz <= self.freq_split["low_max"]:
+            return self.color_low, self.width_low
+        elif f_hz <= self.freq_split["mid_max"]:
+            return self.color_mid, self.width_mid
+        elif f_hz <= self.freq_split["high_max"]:
+            return self.color_high, self.width_high
+        else:
+            return self.color_ultra, self.width_ultra
 
     # ---------- Отрисовка ----------
     def draw_bars(self, painter, w, h, vals):
@@ -356,19 +481,26 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         gap = max(1, int(area_w * 0.002))
         bar_w = max(2, int((area_w - gap * (n - 1)) / n))
 
-        pen = QtGui.QPen(self._with_alpha(self.vis_color, 220))
-        brush = QtGui.QBrush(self._with_alpha(self.vis_color, 200))
-        painter.setPen(pen)
-        painter.setBrush(brush)
-
         x = margin_lr
-        for v in vals:
+        for i, v in enumerate(vals):
             h_pix = int(v * area_h)
             rect = QtCore.QRect(x, base_y - h_pix, bar_w, h_pix)
+
+            if self.band_centers is not None and i < len(self.band_centers):
+                f = float(self.band_centers[i])
+                c, _w = self._color_and_width_by_freq(f)
+            else:
+                c, _w = self.vis_color, 2
+
+            pen = QtGui.QPen(self._with_alpha(c, 220))
+            brush = QtGui.QBrush(self._with_alpha(c, 200))
+            painter.setPen(pen)
+            painter.setBrush(brush)
             painter.drawRect(rect)
+
             x += bar_w + gap
 
-        painter.setPen(QtGui.QPen(self._with_alpha(self.vis_color, 80), 1))
+        painter.setPen(QtGui.QPen(self._with_alpha(QtGui.QColor(255,255,255), 80), 1))
         painter.drawLine(margin_lr, base_y, margin_lr + area_w, base_y)
 
     def draw_circle(self, painter, w, h, vals):
@@ -376,18 +508,16 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         r_inner = int(0.12 * h)
         max_len = int(0.16 * h)
 
-        #jjj
-
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
-        # Базовое тонкое кольцо
+        # Базовое тонкое кольцо (общий цвет)
         base_pen = QtGui.QPen(self._with_alpha(self.vis_color, 70))
         base_pen.setWidth(2)
         painter.setPen(base_pen)
         painter.setBrush(QtCore.Qt.NoBrush)
         painter.drawEllipse(QtCore.QPoint(cx, cy), r_inner, r_inner)
 
-        # Радиальные лучи
+        # Радиальные лучи (по бин-цвету и толщине)
         n = len(vals)
         for i, v in enumerate(vals):
             left = vals[i - 1] if i > 0 else vals[-1]
@@ -402,8 +532,14 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             x2 = cx + int(ca * (r_inner + L))
             y2 = cy + int(sa * (r_inner + L))
 
-            pen = QtGui.QPen(self._with_alpha(self.vis_color, 180))
-            pen.setWidth(2)
+            if self.band_centers is not None and i < len(self.band_centers):
+                f = float(self.band_centers[i])
+                c, wline = self._color_and_width_by_freq(f)
+            else:
+                c, wline = self.vis_color, 2
+
+            pen = QtGui.QPen(self._with_alpha(c, 180))
+            pen.setWidth(int(wline))
             painter.setPen(pen)
             painter.drawLine(x1, y1, x2, y2)
 
@@ -423,12 +559,12 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         ear_max  = int(max_len * 0.9)
 
         for e in ears:
-            c = e["center"]
+            c_center = e["center"]
             amp = e["amp"]
             steps = 36
             for k in range(-steps, steps + 1):
                 t = k / steps
-                ang = c + t * ear_half
+                ang = c_center + t * ear_half
                 window = 0.5 * (1 + math.cos(math.pi * t))
                 L = int(amp * ear_max * (window ** 1.2))
                 ca, sa = math.cos(ang), math.sin(ang)
@@ -437,12 +573,14 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
                 x2 = cx + int(ca * (r_inner + L))
                 y2 = cy + int(sa * (r_inner + L))
 
-                pen = QtGui.QPen(self._with_alpha(self.vis_color, e["alpha"]))
+                # Цвет от группы: низовые уши — цвет низов, верхние — цвет ультры
+                ear_color = self.color_low if c_center in (0.0, math.pi) else self.color_ultra
+                pen = QtGui.QPen(self._with_alpha(ear_color, e["alpha"]))
                 pen.setWidth(4)
                 painter.setPen(pen)
                 painter.drawLine(x1, y1, x2, y2)
 
-        # Мягкое внешнее свечение
+        # Мягкое внешнее свечение (общий цвет)
         glow_pen = QtGui.QPen(self._with_alpha(self.vis_color, 50))
         glow_pen.setWidth(6)
         painter.setPen(glow_pen)
@@ -566,6 +704,9 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         fps = self.fps if (self.cap is not None or self.still_image_bgr is not None) else 30.0
         self.bars = make_bar_features(audio, sr, fps=fps, n_bins=self.n_bins)
         self.audio_path = path
+
+        # ### NEW: центры полос для маппинга «частота → цвет/толщина»
+        self.band_edges, self.band_centers = build_bandplan(sr, self.n_bins)
 
         # Инициализируем и настраиваем аудиоплеер
         if self.player is None:
