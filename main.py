@@ -36,16 +36,14 @@ def read_wav_mono(path):
         dtype = np.int16
         data = np.frombuffer(raw, dtype=dtype).astype(np.float32) / 32768.0
     elif sampwidth == 3:
-        # 24-bit PCM: конвертируем вручную в int32 с выравниванием знака
+        # 24-bit PCM
         a = np.frombuffer(raw, dtype=np.uint8)
         a = a.reshape(-1, 3)
         b = (a[:, 0].astype(np.int32) | (a[:, 1].astype(np.int32) << 8) | (a[:, 2].astype(np.int32) << 16))
-        # преобразуем знаковость 24-бит
         mask = b & 0x800000
         b = b - (mask << 1)
         data = b.astype(np.float32) / 8388608.0
     elif sampwidth == 4:
-        # может быть int32 PCM или float32
         arr = np.frombuffer(raw, dtype=np.int32)
         if np.max(np.abs(arr)) > 1e8:
             data = np.frombuffer(raw, dtype=np.float32)
@@ -70,18 +68,13 @@ def make_bar_features(audio, sr, fps, n_bins=32, ref_median_frames=60):
     samples_per_frame = max(1, int(round(sr / float(fps))))
     n_frames = int(math.ceil(len(audio) / samples_per_frame))
 
-    # Окно Ханна
     hann = np.hanning(samples_per_frame).astype(np.float32)
-
-    # Частоты для rFFT
     freqs = np.fft.rfftfreq(samples_per_frame, d=1.0 / sr)
 
-    # Логарифмически распределённые границы полос
     f_min = 20.0
     f_max = min(sr / 2.0, 16000.0)
     edges = np.geomspace(f_min, f_max, n_bins + 1)
 
-    # Предподсчёт индексов для каждой полосы
     band_indices = []
     for i in range(n_bins):
         f1, f2 = edges[i], edges[i + 1]
@@ -93,7 +86,6 @@ def make_bar_features(audio, sr, fps, n_bins=32, ref_median_frames=60):
 
     bars = np.zeros((n_frames, n_bins), dtype=np.float32)
 
-    # Подсчёт спектральной энергии по кадрам
     for fi in range(n_frames):
         s = fi * samples_per_frame
         e = min(len(audio), s + samples_per_frame)
@@ -102,12 +94,10 @@ def make_bar_features(audio, sr, fps, n_bins=32, ref_median_frames=60):
         frame[: len(seg)] = seg
         frame *= hann
         mag = np.abs(np.fft.rfft(frame))
-
         for b, idx in enumerate(band_indices):
             val = mag[idx].mean()
             bars[fi, b] = val
 
-    # Лог-нормализация и адаптация к уровню
     bars = np.log1p(bars)
     ref = np.median(bars[: min(ref_median_frames, len(bars))], axis=0) + eps
     bars = (bars - ref[None, :])
@@ -115,7 +105,6 @@ def make_bar_features(audio, sr, fps, n_bins=32, ref_median_frames=60):
     if np.max(bars) > eps:
         bars /= (np.max(bars) + eps)
 
-    # Временное сглаживание (пик-холд)
     alpha = 0.35
     for b in range(n_bins):
         acc = 0.0
@@ -126,11 +115,7 @@ def make_bar_features(audio, sr, fps, n_bins=32, ref_median_frames=60):
     return bars
 
 
-# ### NEW: центры полос + утилиты цвета/пера
 def build_bandplan(sr, n_bins, f_min=20.0, f_max_limit=16000.0):
-    """
-    Возвращает (edges, centers) для полос визуализации, чтобы знать частоты каждого бина.
-    """
     f_max = min(sr / 2.0, f_max_limit)
     edges = np.geomspace(f_min, f_max, n_bins + 1)
     centers = np.sqrt(edges[:-1] * edges[1:])
@@ -150,9 +135,6 @@ def color_to_pen(c: QtGui.QColor, alpha=255, width=2):
     return pen
 
 
-# ---------------------------
-# ГЛАВНОЕ ОКНО ПРИЛОЖЕНИЯ
-# ---------------------------
 class VideoAudioVisualizer(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -162,9 +144,9 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
 
-        self.video_label = QtWidgets.QLabel("Загрузите видео/картинку и аудио…")
+        self.video_label = QtWidgets.QLabel("Загрузите видео/картинку и аудио…\nили просто перетащите файл сюда")
         self.video_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.video_label.setStyleSheet("background:#111; color:#aaa; font-size:16px;")
+        self.video_label.setStyleSheet("background:#111; color:#aaa; font-size:16px; border: 2px solid #222;")
         self.video_label.setMinimumSize(800, 450)
 
         self.btn_load_video = QtWidgets.QPushButton("Загрузить видео…")
@@ -176,22 +158,17 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.btn_export = QtWidgets.QPushButton("Сохранить MP4…")
 
         self.combo_vis = QtWidgets.QComboBox()
-        self.combo_vis.addItems(["Столбцы", "Пульсирующая окружность"])  # bars / ring
+        self.combo_vis.addItems(["Столбцы", "Пульсирующая окружность"])
 
-        # Кнопка выбора цвета визуализации (общая, для вспомогательных элементов)
         self.btn_color = QtWidgets.QPushButton("Цвет…")
         self.vis_color = QtGui.QColor(255, 255, 255)
         self._apply_btn_color_style()
 
-        # ### NEW: Кнопки цветов для групп
         self.btn_col_bass = QtWidgets.QPushButton("Бас/Кик")
         self.btn_col_low  = QtWidgets.QPushButton("Низы")
         self.btn_col_mid  = QtWidgets.QPushButton("Средние")
         self.btn_col_high = QtWidgets.QPushButton("ВЧ")
         self.btn_col_top  = QtWidgets.QPushButton("СверхВЧ")
-
-        # будет обновлено стилем после инициализации цветов в состоянии (ниже)
-        # пока стили применим чуть позже (после состояния)
 
         self.slider_speed = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.slider_speed.setRange(50, 200)
@@ -210,7 +187,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         controls.addWidget(self.btn_play)
         controls.addWidget(self.btn_export)
         controls.addWidget(self.btn_color)
-        # ### NEW: панель быстрого выбора цветов диапазонов
         controls.addWidget(self.btn_col_bass)
         controls.addWidget(self.btn_col_low)
         controls.addWidget(self.btn_col_mid)
@@ -247,10 +223,8 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
 
         self.player = None  # QMediaPlayer
 
-        # Хранилище для статичной картинки (фон)
         self.still_image_bgr = None  # np.ndarray HxWx3 uint8
 
-        # ### NEW: Частотные данные и цвета по группам
         self.band_edges = None
         self.band_centers = None
 
@@ -283,14 +257,12 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.btn_export.clicked.connect(self.export_mp4)
         self.btn_color.clicked.connect(self.choose_vis_color)
 
-        # ### NEW: прикрепим обработчики выбора цвета для групп
         self.btn_col_bass.clicked.connect(lambda: self._choose_group_color('bass'))
         self.btn_col_low.clicked.connect(lambda: self._choose_group_color('low'))
         self.btn_col_mid.clicked.connect(lambda: self._choose_group_color('mid'))
         self.btn_col_high.clicked.connect(lambda: self._choose_group_color('high'))
         self.btn_col_top.clicked.connect(lambda: self._choose_group_color('ultra'))
 
-        # И сразу применим стили на кнопки групп
         for b, c in [
             (self.btn_col_bass, self.color_basskick),
             (self.btn_col_low,  self.color_low),
@@ -300,39 +272,39 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         ]:
             self._refresh_group_btn(b, c)
 
+        # --- NEW: Drag-and-Drop включён для всего окна и для области предпросмотра
+        self.setAcceptDrops(True)
+        self.video_label.setAcceptDrops(True)
+        self.video_label.installEventFilter(self)
+        self._dnd_highlight_on = False
+
     def _settings(self) -> QSettings:
         return QSettings("YourOrg", "VideoAudioVisualizer")
 
     def _candidate_ffmpeg_paths(self):
-        # Популярные места на macOS + Linux + Windows
         candidates = [
-            "/opt/homebrew/bin/ffmpeg",  # Homebrew (Apple Silicon)
-            "/usr/local/bin/ffmpeg",  # Homebrew (Intel)
-            "/opt/local/bin/ffmpeg",  # MacPorts
-            "/usr/bin/ffmpeg",  # Linux
-            "C:/ffmpeg/bin/ffmpeg.exe",  # Windows (часто)
+            "/opt/homebrew/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/opt/local/bin/ffmpeg",
+            "/usr/bin/ffmpeg",
+            "C:/ffmpeg/bin/ffmpeg.exe",
         ]
         return candidates
 
     def find_ffmpeg(self) -> str:
-        """Пытается найти ffmpeg: 1) сохранённый путь из QSettings, 2) в PATH, 3) по типичным путям."""
-        # 1) Сохранённый путь пользователя
         s = self._settings()
         saved = s.value("ffmpeg_path", type=str)
         if saved and os.path.isfile(saved) and os.access(saved, os.X_OK):
             return saved
 
-        # 2) В текущем PATH
         p = shutil.which("ffmpeg")
         if p:
             return p
 
-        # 3) Популярные места
         for cand in self._candidate_ffmpeg_paths():
             if os.path.isfile(cand) and os.access(cand, os.X_OK):
                 return cand
 
-        # 4) Попробуем системную `which ffmpeg`
         try:
             out = subprocess.run(["/usr/bin/which", "ffmpeg"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  check=False)
@@ -345,7 +317,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         return None
 
     def ask_ffmpeg_path(self) -> str:
-        """Просит пользователя указать ffmpeg вручную и сохраняет в QSettings."""
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Укажите бинарник ffmpeg", "", "Все файлы (*)")
         if not path:
             return None
@@ -353,7 +324,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "ffmpeg", "Указан несуществующий файл.")
             return None
         if not os.access(path, os.X_OK):
-            # попробуем дать права на исполнение (mac/Linux)
             try:
                 os.chmod(path, os.stat(path).st_mode | 0o111)
             except Exception:
@@ -366,9 +336,116 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         s.setValue("ffmpeg_path", path)
         return path
 
+    # ---------- DnD helpers ----------
+    def is_image_file(self, path: str) -> bool:
+        ext = os.path.splitext(path)[1].lower()
+        return ext in [".png", ".jpg", ".jpeg", ".bmp", ".webp"]
+
+    def is_wav_file(self, path: str) -> bool:
+        return os.path.splitext(path)[1].lower() == ".wav"
+
+    def _set_drop_highlight(self, on: bool):
+        if on == self._dnd_highlight_on:
+            return
+        self._dnd_highlight_on = on
+        if on:
+            self.video_label.setStyleSheet(
+                "background:#111; color:#aaa; font-size:16px; border: 2px dashed #4da3ff;"
+            )
+        else:
+            self.video_label.setStyleSheet(
+                "background:#111; color:#aaa; font-size:16px; border: 2px solid #222;"
+            )
+
+    def _extract_local_paths(self, event: QtGui.QDragEnterEvent) -> list:
+        urls = event.mimeData().urls()
+        paths = []
+        for u in urls:
+            if u.isLocalFile():
+                paths.append(u.toLocalFile())
+        return paths
+
+    def handle_dropped_paths(self, paths: list):
+        """
+        Обрабатываем список путей. Приоритет:
+        - если есть картинка — загрузим её как фон;
+        - если есть WAV — загрузим как аудио.
+        Можно перетащить сразу и картинку, и WAV — обе загрузятся.
+        """
+        if not paths:
+            return
+
+        img_loaded = False
+        wav_loaded = False
+        other_files = []
+
+        for p in paths:
+            if os.path.isdir(p):
+                continue
+            if self.is_image_file(p) and not img_loaded:
+                self.open_image_path(p)
+                img_loaded = True
+            elif self.is_wav_file(p) and not wav_loaded:
+                self.open_audio_path(p)
+                wav_loaded = True
+            else:
+                other_files.append(p)
+
+        if other_files:
+            # Сообщим, что поддерживаем только изображения и WAV
+            pretty = "\n".join(os.path.basename(x) for x in other_files)
+            QtWidgets.QMessageBox.information(
+                self, "Не поддерживается",
+                "Поддерживаются изображения (.png .jpg .jpeg .bmp .webp) и аудио WAV (.wav).\n"
+                f"Пропущены файлы:\n{pretty}"
+            )
+
+    # ---------- Drag & Drop на уровне всего окна ----------
+    def dragEnterEvent(self, event: QtGui.QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            paths = self._extract_local_paths(event)
+            if any(self.is_image_file(p) or self.is_wav_file(p) for p in paths):
+                event.acceptProposedAction()
+                self._set_drop_highlight(True)
+                return
+        event.ignore()
+
+    def dragLeaveEvent(self, event: QtGui.QDragLeaveEvent):
+        self._set_drop_highlight(False)
+        event.accept()
+
+    def dropEvent(self, event: QtGui.QDropEvent):
+        paths = self._extract_local_paths(event)
+        self.handle_dropped_paths(paths)
+        self._set_drop_highlight(False)
+        event.acceptProposedAction()
+
+    # ---------- Drag & Drop непосредственно на label через eventFilter ----------
+    def eventFilter(self, obj, ev):
+        if obj is self.video_label:
+            if ev.type() == QtCore.QEvent.DragEnter:
+                if ev.mimeData().hasUrls():
+                    paths = self._extract_local_paths(ev)
+                    if any(self.is_image_file(p) or self.is_wav_file(p) for p in paths):
+                        ev.acceptProposedAction()
+                        self._set_drop_highlight(True)
+                        return True
+                ev.ignore()
+                return True
+            elif ev.type() == QtCore.QEvent.DragLeave:
+                self._set_drop_highlight(False)
+                ev.accept()
+                return True
+            elif ev.type() == QtCore.QEvent.Drop:
+                paths = self._extract_local_paths(ev)
+                self.handle_dropped_paths(paths)
+                self._set_drop_highlight(False)
+                ev.acceptProposedAction()
+                return True
+        return super().eventFilter(obj, ev)
+
     # ---------- Конвертеры/утилиты ----------
     def qimage_to_bgr(self, qimg):
-        """QImage (Format_RGB888) -> NumPy BGR uint8"""
         w = qimg.width()
         h = qimg.height()
         ptr = qimg.bits()
@@ -377,7 +454,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         return cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
 
     def render_frame_with_overlay(self, frame_bgr, idx):
-        """Вернёт кадр BGR с наложенной визуализацией (без масштабирования)."""
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         h, w, _ = frame_rgb.shape
         qimg = QtGui.QImage(frame_rgb.data, w, h, 3 * w, QtGui.QImage.Format_RGB888).copy()
@@ -401,7 +477,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         return c
 
     def _apply_btn_color_style(self):
-        # мини-превью цвета на кнопке
         c = self.vis_color
         self.btn_color.setFixedWidth(90)
         self.btn_color.setStyleSheet(
@@ -466,7 +541,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
 
     # ---------- Отрисовка ----------
     def draw_bars(self, painter, w, h, vals):
-        # тёмная подложка снизу для читаемости (не зависит от цвета визуализации)
         grad = QtGui.QLinearGradient(0, int(h * 0.6), 0, h)
         grad.setColorAt(0.0, self._with_alpha(QtGui.QColor(0, 0, 0), 0))
         grad.setColorAt(1.0, self._with_alpha(QtGui.QColor(0, 0, 0), 140))
@@ -510,14 +584,12 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
 
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
-        # Базовое тонкое кольцо (общий цвет)
         base_pen = QtGui.QPen(self._with_alpha(self.vis_color, 70))
         base_pen.setWidth(2)
         painter.setPen(base_pen)
         painter.setBrush(QtCore.Qt.NoBrush)
         painter.drawEllipse(QtCore.QPoint(cx, cy), r_inner, r_inner)
 
-        # Радиальные лучи (по бин-цвету и толщине)
         n = len(vals)
         for i, v in enumerate(vals):
             left = vals[i - 1] if i > 0 else vals[-1]
@@ -543,7 +615,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             painter.setPen(pen)
             painter.drawLine(x1, y1, x2, y2)
 
-        # «Ушки» НЧ/ВЧ — дополнительные дуги по энергии краёв спектра
         low_edge = max(1, int(0.15 * n))
         high_edge = max(1, int(0.15 * n))
         low_energy = float(np.mean(vals[:low_edge])) if low_edge < n else float(np.mean(vals))
@@ -573,14 +644,12 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
                 x2 = cx + int(ca * (r_inner + L))
                 y2 = cy + int(sa * (r_inner + L))
 
-                # Цвет от группы: низовые уши — цвет низов, верхние — цвет ультры
                 ear_color = self.color_low if c_center in (0.0, math.pi) else self.color_ultra
                 pen = QtGui.QPen(self._with_alpha(ear_color, e["alpha"]))
                 pen.setWidth(4)
                 painter.setPen(pen)
                 painter.drawLine(x1, y1, x2, y2)
 
-        # Мягкое внешнее свечение (общий цвет)
         glow_pen = QtGui.QPen(self._with_alpha(self.vis_color, 50))
         glow_pen.setWidth(6)
         painter.setPen(glow_pen)
@@ -588,7 +657,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
 
     # ---------- Основной цикл отрисовки ----------
     def next_frame(self):
-        # Источник кадра: видео (если открыто) или статичная картинка
         if self.cap is not None:
             ret, frame_bgr = self.cap.read()
             if not ret:
@@ -654,7 +722,7 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.update_play_button_state()
         self.draw_placeholder()
 
-    # ---------- Загрузка КАРТИНКИ ----------
+    # ---------- Загрузка КАРТИНКИ (с диалогом) ----------
     def load_image(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
@@ -664,13 +732,15 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         )
         if not path:
             return
+        self.open_image_path(path)
 
+    # ---------- Загрузка КАРТИНКИ (по пути) ----------
+    def open_image_path(self, path: str):
         img = cv2.imread(path, cv2.IMREAD_COLOR)
         if img is None:
-            QtWidgets.QMessageBox.critical(self, "Ошибка", "Не удалось открыть изображение.")
+            QtWidgets.QMessageBox.critical(self, "Ошибка", f"Не удалось открыть изображение:\n{path}")
             return
 
-        # Если загружаем картинку — сбрасываем видео-кап
         if self.cap is not None:
             try:
                 self.cap.release()
@@ -683,17 +753,22 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.still_image_bgr = img
         self.image_path = path
         self.frame_index = 0
-        # fps оставляем как есть (по умолчанию 30), либо пользователь может поменять слайдером скорости
 
-        # Отрисуем превью
         self.on_vis_changed(0)
         self.update_window_title()
         self.update_play_button_state()
 
-    # ---------- Загрузка аудио ----------
+    # ---------- Загрузка АУДИО (с диалогом) ----------
     def load_audio(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Выберите аудиофайл (WAV)", "", "Аудио WAV (*.wav);;Все файлы (*.*)")
         if not path:
+            return
+        self.open_audio_path(path)
+
+    # ---------- Загрузка АУДИО (по пути) ----------
+    def open_audio_path(self, path: str):
+        if not self.is_wav_file(path):
+            QtWidgets.QMessageBox.critical(self, "Аудио", "Поддерживается только WAV (.wav).")
             return
         try:
             audio, sr = read_wav_mono(path)
@@ -705,10 +780,8 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.bars = make_bar_features(audio, sr, fps=fps, n_bins=self.n_bins)
         self.audio_path = path
 
-        # ### NEW: центры полос для маппинга «частота → цвет/толщина»
         self.band_edges, self.band_centers = build_bandplan(sr, self.n_bins)
 
-        # Инициализируем и настраиваем аудиоплеер
         if self.player is None:
             self.player = QMediaPlayer(self)
             self.player.mediaStatusChanged.connect(self.on_media_status)
@@ -725,7 +798,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.setWindowTitle(f"Фон: {vname}  |  Аудио: {aname}  |  FPS: {self.fps:.2f}")
 
     def update_play_button_state(self):
-        # Можно играть, если есть видео ИЛИ картинка
         self.btn_play.setEnabled((self.cap is not None) or (self.still_image_bgr is not None))
 
     def on_speed_changed(self, val):
@@ -789,7 +861,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
     def on_vis_changed(self, idx):
         if self.timer.isActive():
             return
-        # перерисуем текущий кадр для предпросмотра
         if self.cap is not None:
             cur = max(0, self.frame_index - 1)
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, cur)
@@ -797,7 +868,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             self.next_frame()
             self.frame_index = prev_index
         elif self.still_image_bgr is not None:
-            # Сгенерируем один кадр поверх картинки
             frame_bgr = self.still_image_bgr.copy()
             frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
             h, w, _ = frame_rgb.shape
@@ -820,10 +890,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
 
     # ---------- Экспорт MP4 ----------
     def qimage_to_bgr_safe(self, qimg: QtGui.QImage) -> np.ndarray:
-        """
-        Корректно вытаскивает пиксели из QImage (RGB888), учитывая bytesPerLine (выравнивание).
-        Возвращает NumPy массив BGR (uint8) формы (h, w, 3).
-        """
         qimg = qimg.convertToFormat(QtGui.QImage.Format_RGB888)
         w = qimg.width()
         h = qimg.height()
@@ -853,7 +919,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
 
         ffmpeg_bin = self.find_ffmpeg()
         if ffmpeg_bin is None:
-            # покажем текущий PATH для отладки
             cur_path = os.environ.get("PATH", "")
             btn = QtWidgets.QMessageBox.question(
                 self,
@@ -868,21 +933,17 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             if ffmpeg_bin is None:
                 return
 
-        # --- Рендер временного видео БЕЗ звука ---
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
 
         if self.cap is not None:
             w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             fps = float(self.fps)
-            # заново от начала
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             n_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         else:
-            # Источник — статичная картинка
             h, w = self.still_image_bgr.shape[:2]
             fps = float(self.fps)
-            # если есть анализ аудио, синхронизируем длину видео с длиной аудио (bars)
             if self.bars is None or len(self.bars) == 0:
                 QtWidgets.QMessageBox.critical(self, "Ошибка", "Нет рассчитанных фич аудио.")
                 return
@@ -892,7 +953,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         prog.setWindowModality(QtCore.Qt.WindowModal)
         prog.setMinimumDuration(0)
 
-        # временная директория для файлов
         tmpdir = tempfile.mkdtemp(prefix="va_export_")
         tmp_video = os.path.join(tmpdir, "video_only.mp4")
 
@@ -902,14 +962,11 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             return
 
         if self.cap is not None:
-            # Рендер по кадрам видео
             for i in range(n_frames):
                 ret, frame_bgr = self.cap.read()
                 if not ret:
                     break
-                # индекс фич по fps
                 idx = i
-                # отрисовка выбранной визуализации поверх кадра
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 qimg = QtGui.QImage(frame_rgb.data, w, h, 3 * w, QtGui.QImage.Format_RGB888).copy()
                 painter = QtGui.QPainter(qimg)
@@ -923,7 +980,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
                         self.draw_circle(painter, w, h, vals)
                 painter.end()
 
-                # обратно в BGR для записи (без «наклонов»)
                 frame_bgr_out = self.qimage_to_bgr_safe(qimg)
                 vw.write(frame_bgr_out)
 
@@ -933,7 +989,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
                     if prog.wasCanceled():
                         break
         else:
-            # Рендер повторяющегося кадра-картинки
             base_bgr = self.still_image_bgr
             for i in range(n_frames):
                 frame_rgb = cv2.cvtColor(base_bgr, cv2.COLOR_BGR2RGB)
@@ -968,17 +1023,16 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
                 pass
             return
 
-        # --- Сведение через ffmpeg ---
         cmd = [
             ffmpeg_bin, "-y",
             "-i", tmp_video,
             "-i", self.audio_path,
-            "-map", "0:v:0",  # видео из первого входа
-            "-map", "1:a:0",  # аудио из второго входа
-            "-c:v", "copy",  # видео копируем (без рекодирования)
-            "-c:a", "aac",  # аудио в AAC
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:v", "copy",
+            "-c:a", "aac",
             "-b:a", "192k",
-            "-shortest",  # обрезаем по более короткому потоку
+            "-shortest",
             out_path
         ]
 
