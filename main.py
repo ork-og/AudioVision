@@ -8,6 +8,7 @@ from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtCore import QUrl
 import shutil, subprocess, tempfile, platform
 from PyQt5.QtCore import QSettings
+from voice_control import VoiceController, VoiceConfig
 
 # ---------------------------
 # УТИЛИТЫ ДЛЯ АУДИО (WAV)
@@ -206,6 +207,16 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(central)
         layout.addWidget(self.video_label, 1)
         layout.addLayout(controls)
+        self.btn_voice = QtWidgets.QPushButton("🎤 Голос")
+        self.btn_voice.setCheckable(True)
+
+        # ... в блоке controls:
+        controls.addWidget(self.btn_voice)
+
+        # контроллер (пока без модели)
+        self.voice = VoiceController(VoiceConfig())
+        self.voice.voiceCommand.connect(self.on_voice_command)
+        self.btn_voice.toggled.connect(self.toggle_voice)
 
         # Состояние
         self.cap = None
@@ -654,6 +665,68 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         glow_pen.setWidth(6)
         painter.setPen(glow_pen)
         painter.drawEllipse(QtCore.QPoint(cx, cy), r_inner + int(0.5 * max_len), r_inner + int(0.5 * max_len))
+
+    def toggle_voice(self, checked: bool):
+        if checked:
+            # УКАЖИ путь к модели Vosk RU — либо через env VOSK_MODEL, либо здесь:
+            # пример: self.voice.cfg.model_path = "/путь/к/vosk-model-small-ru-0.22"
+            if not self.voice.cfg.model_path and not os.environ.get("VOSK_MODEL"):
+                QtWidgets.QMessageBox.information(self, "Vosk",
+                                                  "Укажите путь к модели Vosk (переменная окружения VOSK_MODEL) "
+                                                  "или пропишите voice.cfg.model_path в коде.")
+                self.btn_voice.setChecked(False)
+                return
+            ok = self.voice.start()
+            if not ok:
+                QtWidgets.QMessageBox.critical(self, "Vosk",
+                                               "Не удалось запустить распознавание. Проверьте модель/микрофон.")
+                self.btn_voice.setChecked(False)
+                return
+            self.btn_voice.setText("🛑 Голос")
+        else:
+            self.voice.stop()
+            self.btn_voice.setText("🎤 Голос")
+
+    @QtCore.pyqtSlot(str, object)
+    def on_voice_command(self, cmd: str, payload):
+        try:
+            if cmd == "image":
+                if isinstance(payload, str) and os.path.exists(payload):
+                    self.open_image_path(payload)
+                else:
+                    self.load_image()  # откроем диалог
+            elif cmd == "audio":
+                if isinstance(payload, str) and os.path.exists(payload):
+                    self.open_audio_path(payload)
+                else:
+                    self.load_audio()
+            elif cmd == "play":
+                if not self.btn_play.isChecked():
+                    self.btn_play.setChecked(True)  # дернёт toggle_play
+            elif cmd == "pause":
+                if self.btn_play.isChecked():
+                    self.btn_play.setChecked(False)
+            elif cmd == "mode":
+                # 'bars' / 'ring'
+                if payload == "bars":
+                    self.combo_vis.setCurrentIndex(0)  # Столбцы
+                elif payload == "ring":
+                    self.combo_vis.setCurrentIndex(1)  # Пульсирующая окружность
+            elif cmd == "export":
+                self.export_mp4()
+            elif cmd == "volume":
+                v = int(payload)
+                self.slider_volume.setValue(v)
+            elif cmd == "volume_step":
+                cur = self.slider_volume.value()
+                self.slider_volume.setValue(max(0, min(100, cur + int(payload))))
+            elif cmd == "speed":
+                spd = float(payload)
+                self.slider_speed.setValue(int(round(100 * spd)))
+            # можно расширять: "следующий пресет", "цвет", "уши шире", и т.д.
+        except Exception:
+            # не даём аварий — просто игнор
+            pass
 
     # ---------- Основной цикл отрисовки ----------
     def next_frame(self):

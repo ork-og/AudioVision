@@ -17,7 +17,7 @@ def main():
         variant="fp16",
     ).to(device)
 
-    prompt = "lofi city at night, neon reflections, cinematic, cozy atmosphere"
+    prompt = "lofi night scene, distant figure watching city lights, glowing street lamps, calm atmosphere, cinematic mood, soft lighting, detailed reflections, cozy melancholy"
     image = pipe(
         prompt=prompt,
         num_inference_steps=30,
