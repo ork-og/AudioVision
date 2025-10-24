@@ -2,6 +2,7 @@
 # sdxl_gui_simple.py
 import sys, os, threading, time
 from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5.QtWidgets import QFileDialog
 
 # --- импорт нейросети ---
 import torch
@@ -41,6 +42,8 @@ class SDXLGui(QtWidgets.QWidget):
         self.btn_generate = QtWidgets.QPushButton("Сгенерировать")
         self.btn_generate.setEnabled(False)
 
+        self.btn_saveas = QtWidgets.QPushButton("Сохранить как")
+
         self.lbl_status = QtWidgets.QLabel("Инициализация модели…")
         self.lbl_status.setStyleSheet("color:#aaa")
 
@@ -64,7 +67,10 @@ class SDXLGui(QtWidgets.QWidget):
         buttons = QtWidgets.QHBoxLayout()
         buttons.addWidget(self.btn_generate)
         buttons.addStretch(1)
+        buttons.addWidget(self.btn_saveas)
+        buttons.addStretch(1)
         buttons.addWidget(self.lbl_status)
+        
 
         main = QtWidgets.QVBoxLayout(self)
         main.addWidget(QtWidgets.QLabel("Промпт:"))
@@ -77,13 +83,29 @@ class SDXLGui(QtWidgets.QWidget):
         self.pipe = None
         self._load_thread = None
         self._gen_thread = None
+        self.img = None
 
         # ---------- Сигналы ----------
         self.btn_generate.clicked.connect(self.on_generate)
         self.cmb_device.currentTextChanged.connect(self.on_device_change)
+        self.btn_saveas.clicked.connect(self.savePictureAs)
 
         # Стартуем загрузку модели (асинхронно)
         self._start_load_pipeline(device=self.cmb_device.currentText())
+
+    def savePictureAs(self, sender):
+        options = QFileDialog.Options()
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить файл как",         # заголовок окна
+            "",                            # путь по умолчанию (можно указать "C:/Users/...")
+            "Все файлы (*)",  # фильтры форматов
+            options=options
+        )
+
+        if file_path and self.img:
+            self.img.save(file_path)
 
     # ----------- Загрузка модели -----------
     def _start_load_pipeline(self, device: str):
@@ -164,6 +186,7 @@ class SDXLGui(QtWidgets.QWidget):
                 ).images[0]
 
                 out_name = f"output_{w}x{h}.png"
+                self.img = img
                 img.save(out_name)
                 result = (out_name, None)
             except Exception as e:
