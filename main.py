@@ -134,7 +134,7 @@ def color_to_pen(c: QtGui.QColor, alpha=255, width=2):
     pen = QtGui.QPen(cc)
     pen.setWidth(int(width))
     return pen
-#d
+#drfr
 
 class VideoAudioVisualizer(QtWidgets.QMainWindow):
     def __init__(self):
