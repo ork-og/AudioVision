@@ -7,6 +7,8 @@ from PyQt5.QtWidgets import QFileDialog
 # --- импорт нейросети ---
 import torch
 from diffusers import StableDiffusionXLPipeline
+from llama_cpp import Llama
+
 
 class SDXLGui(QtWidgets.QWidget):
     def __init__(self):
@@ -85,6 +87,12 @@ class SDXLGui(QtWidgets.QWidget):
         self._gen_thread = None
         self.img = None
 
+        self.llm = Llama.from_pretrained(
+            repo_id="bartowski/gemma-2-9b-it-GGUF",
+            filename="gemma-2-9b-it-Q4_K_M.gguf",
+            chat_format="gemma",
+        )
+
         # ---------- Сигналы ----------
         self.btn_generate.clicked.connect(self.on_generate)
         self.cmb_device.currentTextChanged.connect(self.on_device_change)
@@ -92,6 +100,15 @@ class SDXLGui(QtWidgets.QWidget):
 
         # Стартуем загрузку модели (асинхронно)
         self._start_load_pipeline(device=self.cmb_device.currentText())
+
+    def translatePromt(self, txt: str):
+        messages = [
+            {"role": "user", "content": f"Translate into English: {txt}"}
+        ]
+        tokens = int(len(txt.split())*1.25 + 5)
+        out = self.llm.create_chat_completion(messages=messages, max_tokens=tokens)
+        return out["choices"][0]["message"]["content"] 
+
 
     def savePictureAs(self, sender):
         options = QFileDialog.Options()
@@ -161,6 +178,8 @@ class SDXLGui(QtWidgets.QWidget):
             return
 
         prompt = self.ed_prompt.toPlainText().strip()
+        prompt = self.translatePromt(prompt)
+        print(prompt)
         if not prompt:
             QtWidgets.QMessageBox.information(self, "SDXL", "Введите промпт.")
             return
