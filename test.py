@@ -102,12 +102,16 @@ class SDXLGui(QtWidgets.QWidget):
         self._start_load_pipeline(device=self.cmb_device.currentText())
 
     def translatePromt(self, txt: str):
-        messages = [
-            {"role": "user", "content": f"Translate into English: {txt}"}
-        ]
-        tokens = int(len(txt.split())*1.25 + 5)
-        out = self.llm.create_chat_completion(messages=messages, max_tokens=tokens)
-        return out["choices"][0]["message"]["content"] 
+        lowercase_cyrillic_chars = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"
+        for i in txt:
+            if i in lowercase_cyrillic_chars:
+                messages = [
+                    {"role": "user", "content": f"Translate into English: {txt}"}
+                ]
+                tokens = int(len(txt.split())*1.25 + 5)
+                out = self.llm.create_chat_completion(messages=messages, max_tokens=tokens)
+                return out["choices"][0]["message"]["content"]
+        return txt
 
 
     def savePictureAs(self, sender):
