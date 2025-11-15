@@ -14,15 +14,13 @@ class ImageAI:
             use_fp16 = device in ("mps", "cuda")
             dtype = torch.float16 if use_fp16 else torch.float32
 
-            pipe = StableDiffusionXLPipeline.from_pretrained(
+            self.pipe = StableDiffusionXLPipeline.from_pretrained(
                 "stabilityai/stable-diffusion-xl-base-1.0",
                 torch_dtype=dtype,
                 variant="fp16" if use_fp16 else None,
             ).to(device)
 
-            self.pipe = pipe
-
-            return pipe
+            return self.pipe
 
         except Exception as e:
             print(e)
