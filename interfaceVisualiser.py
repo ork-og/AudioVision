@@ -12,6 +12,9 @@ from PyQt5.QtCore import QUrl, QSettings
 from voice_control import VoiceController, VoiceConfig
 from EngineAV import AVVisualizerEngine
 
+# <<< НОВОЕ: импорт окна генератора >>>
+from GeniratorUI import SDXLGui
+
 
 def qcolor(r, g, b, a=255):
     c = QtGui.QColor(int(r), int(g), int(b), int(a))
@@ -39,6 +42,9 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.btn_play.setCheckable(True)
         self.btn_play.setEnabled(False)
         self.btn_export = QtWidgets.QPushButton("Сохранить MP4…")
+
+        # <<< НОВОЕ: кнопка для генератора картинок >>>
+        self.btn_open_generator = QtWidgets.QPushButton("Генератор картинок")
 
         self.combo_vis = QtWidgets.QComboBox()
         self.combo_vis.addItems(["Столбцы", "Пульсирующая окружность"])
@@ -76,6 +82,9 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         controls.addWidget(self.btn_col_high)
         controls.addWidget(self.btn_col_top)
 
+        # <<< НОВОЕ: добавляем кнопку генератора в панель управления >>>
+        controls.addWidget(self.btn_open_generator)
+
         controls.addStretch(1)
         controls.addWidget(QtWidgets.QLabel("Визуализация:"))
         controls.addWidget(self.combo_vis)
@@ -109,6 +118,9 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.frame_index = 0
 
         self.player: QMediaPlayer | None = None  # для проигрывания аудио
+
+        # <<< НОВОЕ: ссылка на окно генератора, чтобы не собирался GC >>>
+        self.generator_window: SDXLGui | None = None
 
         # Частотные группы и цвета
         self.freq_split = {
@@ -146,6 +158,9 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.btn_col_high.clicked.connect(lambda: self._choose_group_color('high'))
         self.btn_col_top.clicked.connect(lambda: self._choose_group_color('ultra'))
 
+        # <<< НОВОЕ: обработчик кнопки генератора >>>
+        self.btn_open_generator.clicked.connect(self.open_generator_window)
+
         for b, c in [
             (self.btn_col_bass, self.color_basskick),
             (self.btn_col_low,  self.color_low),
@@ -160,6 +175,18 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.video_label.setAcceptDrops(True)
         self.video_label.installEventFilter(self)
         self._dnd_highlight_on = False
+
+    # ---------- Окно генератора картинок ----------
+
+    def open_generator_window(self):
+        """
+        Открыть (или показать уже открытое) окно генератора картинок SDXLGui.
+        """
+        if self.generator_window is None:
+            self.generator_window = SDXLGui()
+        self.generator_window.show()
+        self.generator_window.raise_()
+        self.generator_window.activateWindow()
 
     # ---------- Настройки / ffmpeg ----------
 
