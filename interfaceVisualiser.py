@@ -5,14 +5,11 @@ import math
 import numpy as np
 import cv2
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5 import QtCore, QtGui, QtWidgets, uic
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtCore import QUrl, QSettings
 
-from voice_control import VoiceController, VoiceConfig
 from EngineAV import AVVisualizerEngine
-
-# <<< НОВОЕ: импорт окна генератора >>>
 from GeniratorUI import SDXLGui
 
 
@@ -24,90 +21,13 @@ def qcolor(r, g, b, a=255):
 class VideoAudioVisualizer(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
+
+        # ---------- Загрузка интерфейса из visualiser.ui ----------
+        # Убедись, что файл "visualiser.ui" лежит рядом с этим .py
+        uic.loadUi("visualiser.ui", self)
+
+        # Можно переопределить заголовок окна при желании
         self.setWindowTitle("Видеоплеер + аудио-визуализация (PyQt5)")
-        self.resize(1100, 700)
-
-        central = QtWidgets.QWidget()
-        self.setCentralWidget(central)
-
-        self.video_label = QtWidgets.QLabel("Загрузите видео/картинку и аудио…\nили просто перетащите файл сюда")
-        self.video_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.video_label.setStyleSheet("background:#111; color:#aaa; font-size:16px; border: 2px solid #222;")
-        self.video_label.setMinimumSize(800, 450)
-
-        self.btn_load_video = QtWidgets.QPushButton("Загрузить видео…")
-        self.btn_load_image = QtWidgets.QPushButton("Загрузить картинку…")
-        self.btn_load_audio = QtWidgets.QPushButton("Загрузить аудио (WAV)…")
-        self.btn_play = QtWidgets.QPushButton("▶️ Пуск")
-        self.btn_play.setCheckable(True)
-        self.btn_play.setEnabled(False)
-        self.btn_export = QtWidgets.QPushButton("Сохранить MP4…")
-
-        # <<< НОВОЕ: кнопка для генератора картинок >>>
-        self.btn_open_generator = QtWidgets.QPushButton("Генератор картинок")
-
-        self.combo_vis = QtWidgets.QComboBox()
-        self.combo_vis.addItems(["Столбцы", "Пульсирующая окружность"])
-
-        self.btn_color = QtWidgets.QPushButton("Цвет…")
-        self.vis_color = QtGui.QColor(255, 255, 255)
-        self._apply_btn_color_style()
-
-        self.btn_col_bass = QtWidgets.QPushButton("Бас/Кик")
-        self.btn_col_low  = QtWidgets.QPushButton("Низы")
-        self.btn_col_mid  = QtWidgets.QPushButton("Средние")
-        self.btn_col_high = QtWidgets.QPushButton("ВЧ")
-        self.btn_col_top  = QtWidgets.QPushButton("СверхВЧ")
-
-        self.slider_speed = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.slider_speed.setRange(50, 200)
-        self.slider_speed.setValue(100)
-        self.lbl_speed = QtWidgets.QLabel("Скорость: 1.00x")
-
-        self.slider_volume = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.slider_volume.setRange(0, 100)
-        self.slider_volume.setValue(80)
-        self.lbl_volume = QtWidgets.QLabel("Громкость: 80%")
-
-        controls = QtWidgets.QHBoxLayout()
-        controls.addWidget(self.btn_load_video)
-        controls.addWidget(self.btn_load_image)
-        controls.addWidget(self.btn_load_audio)
-        controls.addWidget(self.btn_play)
-        controls.addWidget(self.btn_export)
-        controls.addWidget(self.btn_color)
-        controls.addWidget(self.btn_col_bass)
-        controls.addWidget(self.btn_col_low)
-        controls.addWidget(self.btn_col_mid)
-        controls.addWidget(self.btn_col_high)
-        controls.addWidget(self.btn_col_top)
-
-        # <<< НОВОЕ: добавляем кнопку генератора в панель управления >>>
-        controls.addWidget(self.btn_open_generator)
-
-        controls.addStretch(1)
-        controls.addWidget(QtWidgets.QLabel("Визуализация:"))
-        controls.addWidget(self.combo_vis)
-        controls.addSpacing(20)
-        controls.addWidget(self.lbl_speed)
-        controls.addWidget(self.slider_speed)
-        controls.addSpacing(12)
-        controls.addWidget(self.lbl_volume)
-        controls.addWidget(self.slider_volume)
-
-        layout = QtWidgets.QVBoxLayout(central)
-        layout.addWidget(self.video_label, 1)
-        layout.addLayout(controls)
-
-        # Кнопка голосового управления
-        self.btn_voice = QtWidgets.QPushButton("🎤 Голос")
-        self.btn_voice.setCheckable(True)
-        controls.addWidget(self.btn_voice)
-
-        # Голосовой контроллер
-        self.voice = VoiceController(VoiceConfig())
-        self.voice.voiceCommand.connect(self.on_voice_command)
-        self.btn_voice.toggled.connect(self.toggle_voice)
 
         # ---------- Состояние (GUI + движок) ----------
         self.n_bins = 32
@@ -117,10 +37,8 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.timer.timeout.connect(self.next_frame)
         self.frame_index = 0
 
-        self.player: QMediaPlayer | None = None  # для проигрывания аудио
-
-        # <<< НОВОЕ: ссылка на окно генератора, чтобы не собирался GC >>>
-        self.generator_window: SDXLGui | None = None
+        self.player = None  # QMediaPlayer
+        self.generator_window = None  # окно генератора картинок
 
         # Частотные группы и цвета
         self.freq_split = {
@@ -141,26 +59,19 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.width_high     = 2
         self.width_ultra    = 1
 
-        # Сигналы
-        self.btn_load_video.clicked.connect(self.load_video)
-        self.btn_load_image.clicked.connect(self.load_image)
-        self.btn_load_audio.clicked.connect(self.load_audio)
-        self.btn_play.toggled.connect(self.toggle_play)
-        self.slider_speed.valueChanged.connect(self.on_speed_changed)
-        self.slider_volume.valueChanged.connect(self.on_volume_changed)
-        self.combo_vis.currentIndexChanged.connect(self.on_vis_changed)
-        self.btn_export.clicked.connect(self.export_mp4)
-        self.btn_color.clicked.connect(self.choose_vis_color)
+        # ---------- Доп. оформление некоторых элементов ----------
+        # video_label — центрируем и даём фон (если в .ui уже есть стили — можно убрать)
+        self.video_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.video_label.setMinimumSize(800, 450)
+        self.video_label.setStyleSheet(
+            "background:#111; color:#aaa; font-size:16px; border: 2px solid #222;"
+        )
 
-        self.btn_col_bass.clicked.connect(lambda: self._choose_group_color('bass'))
-        self.btn_col_low.clicked.connect(lambda: self._choose_group_color('low'))
-        self.btn_col_mid.clicked.connect(lambda: self._choose_group_color('mid'))
-        self.btn_col_high.clicked.connect(lambda: self._choose_group_color('high'))
-        self.btn_col_top.clicked.connect(lambda: self._choose_group_color('ultra'))
+        # Цвет основной визуализации
+        self.vis_color = QtGui.QColor(255, 255, 255)
+        self._apply_btn_color_style()
 
-        # <<< НОВОЕ: обработчик кнопки генератора >>>
-        self.btn_open_generator.clicked.connect(self.open_generator_window)
-
+        # Применим стили к кнопкам диапазонов
         for b, c in [
             (self.btn_col_bass, self.color_basskick),
             (self.btn_col_low,  self.color_low),
@@ -170,18 +81,48 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         ]:
             self._refresh_group_btn(b, c)
 
+        # Слайдер громкости сразу выставим на 80%, как в коде
+        self.slider_volume.setMinimum(0)
+        self.slider_volume.setMaximum(100)
+        if self.slider_volume.value() == 0:
+            self.slider_volume.setValue(80)
+        self.lbl_volume.setText(f"Громкость: {self.slider_volume.value()}%")
+
+        # ---------- Сигналы ----------
+        self.btn_load_video.clicked.connect(self.load_video)
+        self.btn_load_image.clicked.connect(self.load_image)
+        self.btn_load_audio.clicked.connect(self.load_audio)
+        self.btn_play.toggled.connect(self.toggle_play)
+        self.btn_export.clicked.connect(self.export_mp4)
+
+        self.slider_volume.valueChanged.connect(self.on_volume_changed)
+        self.combo_vis.currentIndexChanged.connect(self.on_vis_changed)
+        self.btn_color.clicked.connect(self.choose_vis_color)
+
+        self.btn_col_bass.clicked.connect(lambda: self._choose_group_color('bass'))
+        self.btn_col_low.clicked.connect(lambda: self._choose_group_color('low'))
+        self.btn_col_mid.clicked.connect(lambda: self._choose_group_color('mid'))
+        self.btn_col_high.clicked.connect(lambda: self._choose_group_color('high'))
+        self.btn_col_top.clicked.connect(lambda: self._choose_group_color('ultra'))
+
+        self.btn_open_generator.clicked.connect(self.open_generator_window)
+
         # Drag-and-Drop
         self.setAcceptDrops(True)
         self.video_label.setAcceptDrops(True)
         self.video_label.installEventFilter(self)
         self._dnd_highlight_on = False
 
+        # Кнопка play по умолчанию неактивна, пока нет фона
+        self.btn_play.setCheckable(True)
+        self.btn_play.setEnabled(False)
+
+        # Заполним плейсхолдером
+        self.draw_placeholder()
+
     # ---------- Окно генератора картинок ----------
 
     def open_generator_window(self):
-        """
-        Открыть (или показать уже открытое) окно генератора картинок SDXLGui.
-        """
         if self.generator_window is None:
             self.generator_window = SDXLGui()
         self.generator_window.show()
@@ -528,69 +469,6 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
                             r_inner + int(0.5 * max_len),
                             r_inner + int(0.5 * max_len))
 
-    # ---------- Голос ----------
-
-    def toggle_voice(self, checked: bool):
-        if checked:
-            if not self.voice.cfg.model_path and not os.environ.get("VOSK_MODEL"):
-                QtWidgets.QMessageBox.information(
-                    self, "Vosk",
-                    "Укажите путь к модели Vosk (переменная окружения VOSK_MODEL) "
-                    "или пропишите voice.cfg.model_path в коде."
-                )
-                self.btn_voice.setChecked(False)
-                return
-            ok = self.voice.start()
-            if not ok:
-                QtWidgets.QMessageBox.critical(
-                    self, "Vosk",
-                    "Не удалось запустить распознавание. Проверьте модель/микрофон."
-                )
-                self.btn_voice.setChecked(False)
-                return
-            self.btn_voice.setText("🛑 Голос")
-        else:
-            self.voice.stop()
-            self.btn_voice.setText("🎤 Голос")
-
-    @QtCore.pyqtSlot(str, object)
-    def on_voice_command(self, cmd: str, payload):
-        try:
-            if cmd == "image":
-                if isinstance(payload, str) and os.path.exists(payload):
-                    self.open_image_path(payload)
-                else:
-                    self.load_image()
-            elif cmd == "audio":
-                if isinstance(payload, str) and os.path.exists(payload):
-                    self.open_audio_path(payload)
-                else:
-                    self.load_audio()
-            elif cmd == "play":
-                if not self.btn_play.isChecked():
-                    self.btn_play.setChecked(True)
-            elif cmd == "pause":
-                if self.btn_play.isChecked():
-                    self.btn_play.setChecked(False)
-            elif cmd == "mode":
-                if payload == "bars":
-                    self.combo_vis.setCurrentIndex(0)
-                elif payload == "ring":
-                    self.combo_vis.setCurrentIndex(1)
-            elif cmd == "export":
-                self.export_mp4()
-            elif cmd == "volume":
-                v = int(payload)
-                self.slider_volume.setValue(v)
-            elif cmd == "volume_step":
-                cur = self.slider_volume.value()
-                self.slider_volume.setValue(max(0, min(100, cur + int(payload))))
-            elif cmd == "speed":
-                spd = float(payload)
-                self.slider_speed.setValue(int(round(100 * spd)))
-        except Exception:
-            pass
-
     # ---------- Основной цикл отрисовки ----------
 
     def next_frame(self):
@@ -699,7 +577,7 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
 
         self.player.setMedia(QMediaContent(QUrl.fromLocalFile(path)))
         self.player.setVolume(self.slider_volume.value())
-        self.player.setPlaybackRate(self.slider_speed.value() / 100.0)
+        self.player.setPlaybackRate(1.0)  # скорость фиксированная
 
         self.update_window_title()
         self.update_play_button_state()
@@ -721,16 +599,7 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             (self.engine.cap is not None) or (self.engine.still_image_bgr is not None)
         )
 
-    # ---------- Управление плеером / скоростью ----------
-
-    def on_speed_changed(self, val):
-        spd = val / 100.0
-        self.lbl_speed.setText(f"Скорость: {spd:.2f}x")
-        if self.timer.isActive():
-            interval_ms = max(1, int(1000.0 / (self.engine.fps * spd)))
-            self.timer.setInterval(interval_ms)
-        if self.player is not None:
-            self.player.setPlaybackRate(spd)
+    # ---------- Управление плеером ----------
 
     def toggle_play(self, checked):
         if checked:
@@ -738,7 +607,7 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
                 QtWidgets.QMessageBox.information(self, "Нет источника", "Сначала загрузите видео или картинку.")
                 self.btn_play.setChecked(False)
                 return
-            spd = self.slider_speed.value() / 100.0
+            spd = 1.0
             interval_ms = max(1, int(1000.0 / (self.engine.fps * spd)))
             self.timer.start(interval_ms)
             if self.player is not None:
