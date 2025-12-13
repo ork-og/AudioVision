@@ -613,26 +613,26 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             if self.player is not None:
                 self.player.setPlaybackRate(spd)
                 self.player.play()
-            self.btn_play.setText("⏸ Пауза")
+            self.btn_play.setText("⏸")
         else:
             self.timer.stop()
             if self.player is not None:
                 self.player.pause()
-            self.btn_play.setText("▶️ Пуск")
+            self.btn_play.setText("▶")
 
     def draw_placeholder(self):
-        w = max(800, self.video_label.width())
-        h = max(450, self.video_label.height())
-        img = QtGui.QImage(w, h, QtGui.QImage.Format_RGB32)
-        img.fill(QtGui.QColor(17, 17, 17))
-        painter = QtGui.QPainter(img)
-        painter.setPen(QtGui.QColor(200, 200, 200))
-        painter.setFont(QtGui.QFont("Arial", 16))
-        msg = "Нажмите ▶️ для воспроизведения"
-        rect = QtCore.QRect(0, 0, w, h)
-        painter.drawText(rect, QtCore.Qt.AlignCenter, msg)
-        painter.end()
-        self.video_label.setPixmap(QtGui.QPixmap.fromImage(img))
+        # ВАЖНО: если раньше стоял pixmap — очищаем
+        self.video_label.clear()
+
+        self.video_label.setText(
+            "Загрузите видео/картинку и аудио…\n"
+            "или просто перетащите файл сюда"
+        )
+        self.video_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.video_label.setStyleSheet(
+            "background:#111; color:#aaa; font-size:16px; border: 2px solid #222;"
+        )
+
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
