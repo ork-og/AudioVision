@@ -57,7 +57,7 @@ class SDXLGui(QtWidgets.QWidget):
 
         # ---------- Разметка ----------
         grid = QtWidgets.QGridLayout()
-        grid.addWidget(QtWidgets.QLabel("Эпохи:"), 0, 0)
+        grid.addWidget(QtWidgets.QLabel("Cлои генерации:"), 0, 0)
         grid.addWidget(self.sp_steps, 0, 1)
         grid.addWidget(QtWidgets.QLabel("Ширина:"), 0, 2)
         grid.addWidget(self.sp_width, 0, 3)

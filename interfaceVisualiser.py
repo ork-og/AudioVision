@@ -12,6 +12,15 @@ from PyQt5.QtCore import QUrl, QSettings
 from EngineAV import AVVisualizerEngine
 from GeniratorUI import SDXLGui
 
+from ui_visualiser import Ui_VideoAudioVisualizer
+
+
+import os
+
+if getattr(sys, "frozen", False):
+    base_dir = os.path.dirname(sys.executable)   # папка где лежит exe
+else:
+    base_dir = os.path.dirname(__file__)         # папка проекта
 
 def qcolor(r, g, b, a=255):
     c = QtGui.QColor(int(r), int(g), int(b), int(a))
@@ -24,7 +33,8 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
 
         # ---------- Загрузка интерфейса из visualiser.ui ----------
         # Убедись, что файл "visualiser.ui" лежит рядом с этим .py
-        uic.loadUi("visualiser.ui", self)
+        self.ui = Ui_VideoAudioVisualizer()
+        self.ui.setupUi(self)
 
         # Можно переопределить заголовок окна при желании
         self.setWindowTitle("Видеоплеер + аудио-визуализация (PyQt5)")
@@ -61,9 +71,9 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
 
         # ---------- Доп. оформление некоторых элементов ----------
         # video_label — центрируем и даём фон (если в .ui уже есть стили — можно убрать)
-        self.video_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.video_label.setMinimumSize(800, 450)
-        self.video_label.setStyleSheet(
+        self.ui.video_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.ui.video_label.setMinimumSize(800, 450)
+        self.ui.video_label.setStyleSheet(
             "background:#111; color:#aaa; font-size:16px; border: 2px solid #222;"
         )
 
@@ -73,49 +83,49 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
 
         # Применим стили к кнопкам диапазонов
         for b, c in [
-            (self.btn_col_bass, self.color_basskick),
-            (self.btn_col_low,  self.color_low),
-            (self.btn_col_mid,  self.color_mid),
-            (self.btn_col_high, self.color_high),
-            (self.btn_col_top,  self.color_ultra),
+            (self.ui.btn_col_bass, self.color_basskick),
+            (self.ui.btn_col_low,  self.color_low),
+            (self.ui.btn_col_mid,  self.color_mid),
+            (self.ui.btn_col_high, self.color_high),
+            (self.ui.btn_col_top,  self.color_ultra),
         ]:
             self._refresh_group_btn(b, c)
 
         # Слайдер громкости сразу выставим на 80%, как в коде
-        self.slider_volume.setMinimum(0)
-        self.slider_volume.setMaximum(100)
-        if self.slider_volume.value() == 0:
-            self.slider_volume.setValue(80)
-        self.lbl_volume.setText(f"Громкость: {self.slider_volume.value()}%")
+        self.ui.slider_volume.setMinimum(0)
+        self.ui.slider_volume.setMaximum(100)
+        if self.ui.slider_volume.value() == 0:
+            self.ui.slider_volume.setValue(80)
+        self.ui.lbl_volume.setText(f"Громкость: {self.ui.slider_volume.value()}%")
 
         # ---------- Сигналы ----------
-        self.btn_load_video.clicked.connect(self.load_video)
-        self.btn_load_image.clicked.connect(self.load_image)
-        self.btn_load_audio.clicked.connect(self.load_audio)
-        self.btn_play.toggled.connect(self.toggle_play)
-        self.btn_export.clicked.connect(self.export_mp4)
+        self.ui.btn_load_video.clicked.connect(self.load_video)
+        self.ui.btn_load_image.clicked.connect(self.load_image)
+        self.ui.btn_load_audio.clicked.connect(self.load_audio)
+        self.ui.btn_play.toggled.connect(self.toggle_play)
+        self.ui.btn_export.clicked.connect(self.export_mp4)
 
-        self.slider_volume.valueChanged.connect(self.on_volume_changed)
-        self.combo_vis.currentIndexChanged.connect(self.on_vis_changed)
-        self.btn_color.clicked.connect(self.choose_vis_color)
+        self.ui.slider_volume.valueChanged.connect(self.on_volume_changed)
+        self.ui.combo_vis.currentIndexChanged.connect(self.on_vis_changed)
+        self.ui.btn_color.clicked.connect(self.choose_vis_color)
 
-        self.btn_col_bass.clicked.connect(lambda: self._choose_group_color('bass'))
-        self.btn_col_low.clicked.connect(lambda: self._choose_group_color('low'))
-        self.btn_col_mid.clicked.connect(lambda: self._choose_group_color('mid'))
-        self.btn_col_high.clicked.connect(lambda: self._choose_group_color('high'))
-        self.btn_col_top.clicked.connect(lambda: self._choose_group_color('ultra'))
+        self.ui.btn_col_bass.clicked.connect(lambda: self._choose_group_color('bass'))
+        self.ui.btn_col_low.clicked.connect(lambda: self._choose_group_color('low'))
+        self.ui.btn_col_mid.clicked.connect(lambda: self._choose_group_color('mid'))
+        self.ui.btn_col_high.clicked.connect(lambda: self._choose_group_color('high'))
+        self.ui.btn_col_top.clicked.connect(lambda: self._choose_group_color('ultra'))
 
-        self.btn_open_generator.clicked.connect(self.open_generator_window)
+        self.ui.btn_open_generator.clicked.connect(self.open_generator_window)
 
         # Drag-and-Drop
         self.setAcceptDrops(True)
-        self.video_label.setAcceptDrops(True)
-        self.video_label.installEventFilter(self)
+        self.ui.video_label.setAcceptDrops(True)
+        self.ui.video_label.installEventFilter(self)
         self._dnd_highlight_on = False
 
         # Кнопка play по умолчанию неактивна, пока нет фона
-        self.btn_play.setCheckable(True)
-        self.btn_play.setEnabled(False)
+        self.ui.btn_play.setCheckable(True)
+        self.ui.btn_play.setEnabled(False)
 
         # Заполним плейсхолдером
         self.draw_placeholder()
@@ -177,11 +187,11 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             return
         self._dnd_highlight_on = on
         if on:
-            self.video_label.setStyleSheet(
+            self.ui.video_label.setStyleSheet(
                 "background:#111; color:#aaa; font-size:16px; border: 2px dashed #4da3ff;"
             )
         else:
-            self.video_label.setStyleSheet(
+            self.ui.video_label.setStyleSheet(
                 "background:#111; color:#aaa; font-size:16px; border: 2px solid #222;"
             )
 
@@ -241,7 +251,7 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         event.acceptProposedAction()
 
     def eventFilter(self, obj, ev):
-        if obj is self.video_label:
+        if obj is self.ui.video_label:
             if ev.type() == QtCore.QEvent.DragEnter:
                 if ev.mimeData().hasUrls():
                     paths = self._extract_local_paths(ev)
@@ -286,8 +296,8 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
 
     def _apply_btn_color_style(self):
         c = self.vis_color
-        self.btn_color.setFixedWidth(90)
-        self.btn_color.setStyleSheet(
+        self.ui.btn_color.setFixedWidth(90)
+        self.ui.btn_color.setStyleSheet(
             f"QPushButton{{padding:6px 10px; border-radius:6px; border:1px solid #444;"
             f"background-color: rgba({c.red()},{c.green()},{c.blue()},255); color: #000;}}"
             f"QPushButton:hover{{filter: brightness(1.08);}}"
@@ -313,19 +323,19 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             return
         if which == 'bass':
             self.color_basskick = c
-            self._refresh_group_btn(self.btn_col_bass, c)
+            self._refresh_group_btn(self.ui.btn_col_bass, c)
         elif which == 'low':
             self.color_low = c
-            self._refresh_group_btn(self.btn_col_low, c)
+            self._refresh_group_btn(self.ui.btn_col_low, c)
         elif which == 'mid':
             self.color_mid = c
-            self._refresh_group_btn(self.btn_col_mid, c)
+            self._refresh_group_btn(self.ui.btn_col_mid, c)
         elif which == 'high':
             self.color_high = c
-            self._refresh_group_btn(self.btn_col_high, c)
+            self._refresh_group_btn(self.ui.btn_col_high, c)
         else:
             self.color_ultra = c
-            self._refresh_group_btn(self.btn_col_top, c)
+            self._refresh_group_btn(self.ui.btn_col_top, c)
         self.on_vis_changed(0)
 
     def choose_vis_color(self):
@@ -496,7 +506,7 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
                 bars_vec = self.engine.get_bar_values_for_frame(self.frame_index, wrap=True)
 
         if bars_vec is not None:
-            mode = self.combo_vis.currentText()
+            mode = self.ui.combo_vis.currentText()
             if mode == "Столбцы":
                 self.draw_bars(painter, w, h, bars_vec)
             else:
@@ -504,8 +514,8 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         painter.end()
 
         pix = QtGui.QPixmap.fromImage(qimg)
-        pix = pix.scaled(self.video_label.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
-        self.video_label.setPixmap(pix)
+        pix = pix.scaled(self.ui.video_label.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        self.ui.video_label.setPixmap(pix)
         self.frame_index += 1
 
     # ---------- Загрузка видео / картинки / аудио ----------
@@ -565,18 +575,19 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.open_audio_path(path)
 
     def open_audio_path(self, path: str):
-        try:
+        try: 
             self.engine.load_audio_wav(path)
+
         except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "Ошибка аудио", f"Не удалось прочитать WAV.\n{e}")
-            return
+            pass
+       
 
         if self.player is None:
             self.player = QMediaPlayer(self)
             self.player.mediaStatusChanged.connect(self.on_media_status)
 
         self.player.setMedia(QMediaContent(QUrl.fromLocalFile(path)))
-        self.player.setVolume(self.slider_volume.value())
+        self.player.setVolume(self.ui.slider_volume.value())
         self.player.setPlaybackRate(1.0)  # скорость фиксированная
 
         self.update_window_title()
@@ -595,7 +606,7 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.setWindowTitle(f"Фон: {vname}  |  Аудио: {aname}  |  FPS: {self.engine.fps:.2f}")
 
     def update_play_button_state(self):
-        self.btn_play.setEnabled(
+        self.ui.btn_play.setEnabled(
             (self.engine.cap is not None) or (self.engine.still_image_bgr is not None)
         )
 
@@ -605,7 +616,7 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         if checked:
             if (self.engine.cap is None) and (self.engine.still_image_bgr is None):
                 QtWidgets.QMessageBox.information(self, "Нет источника", "Сначала загрузите видео или картинку.")
-                self.btn_play.setChecked(False)
+                self.ui.btn_play.setChecked(False)
                 return
             spd = 1.0
             interval_ms = max(1, int(1000.0 / (self.engine.fps * spd)))
@@ -613,47 +624,47 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             if self.player is not None:
                 self.player.setPlaybackRate(spd)
                 self.player.play()
-            self.btn_play.setText("⏸")
+            self.ui.btn_play.setText("⏸")
         else:
             self.timer.stop()
             if self.player is not None:
                 self.player.pause()
-            self.btn_play.setText("▶")
+            self.ui.btn_play.setText("▶")
 
     def draw_placeholder(self):
         # ВАЖНО: если раньше стоял pixmap — очищаем
-        self.video_label.clear()
+        self.ui.video_label.clear()
 
-        self.video_label.setText(
+        self.ui.video_label.setText(
             "Загрузите видео/картинку и аудио…\n"
             "или просто перетащите файл сюда"
         )
-        self.video_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.video_label.setStyleSheet(
+        self.ui.video_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.ui.video_label.setStyleSheet(
             "background:#111; color:#aaa; font-size:16px; border: 2px solid #222;"
         )
 
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self.video_label.pixmap() is not None:
-            self.video_label.setPixmap(
-                self.video_label.pixmap().scaled(
-                    self.video_label.size(),
+        if self.ui.video_label.pixmap() is not None:
+            self.ui.video_label.setPixmap(
+                self.ui.video_label.pixmap().scaled(
+                    self.ui.video_label.size(),
                     QtCore.Qt.KeepAspectRatio,
                     QtCore.Qt.SmoothTransformation
                 )
             )
 
     def on_volume_changed(self, val):
-        self.lbl_volume.setText(f"Громкость: {val}%")
+        self.ui.lbl_volume.setText(f"Громкость: {val}%")
         if self.player is not None:
             self.player.setVolume(val)
 
     def on_media_status(self, status):
         if status == QMediaPlayer.EndOfMedia:
             self.player.setPosition(0)
-            if self.btn_play.isChecked():
+            if self.ui.btn_play.isChecked():
                 self.player.play()
 
     def on_vis_changed(self, idx):
@@ -681,7 +692,7 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
 
         painter = QtGui.QPainter(qimg)
         if bars_vec is not None:
-            mode = self.combo_vis.currentText()
+            mode = self.ui.combo_vis.currentText()
             if mode == "Столбцы":
                 self.draw_bars(painter, w, h, bars_vec)
             else:
@@ -690,11 +701,11 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
 
         pix = QtGui.QPixmap.fromImage(qimg)
         pix = pix.scaled(
-            self.video_label.size(),
+            self.ui.video_label.size(),
             QtCore.Qt.KeepAspectRatio,
             QtCore.Qt.SmoothTransformation
         )
-        self.video_label.setPixmap(pix)
+        self.ui.video_label.setPixmap(pix)
 
     # ---------- Экспорт MP4 ----------
 
