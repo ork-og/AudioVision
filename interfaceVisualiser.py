@@ -276,16 +276,19 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
     # ---------- Конвертеры/утилиты ----------
 
     def qimage_to_bgr_safe(self, qimg: QtGui.QImage) -> np.ndarray:
-        qimg = qimg.convertToFormat(QtGui.QImage.Format_RGB888)
+        qimg = qimg.convertToFormat(QtGui.QImage.Format_BGR888)
         w = qimg.width()
         h = qimg.height()
         bpl = qimg.bytesPerLine()
         ptr = qimg.bits()
         ptr.setsize(bpl * h)
         buf = np.frombuffer(ptr, np.uint8).reshape((h, bpl))
-        rgb = buf[:, : w * 3].reshape((h, w, 3))
-        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        bgr = buf[:, : w * 3].reshape((h, w, 3)).copy()
         return bgr
+
+    def bgr_to_qimage(self, frame_bgr: np.ndarray) -> QtGui.QImage:
+        h, w = frame_bgr.shape[:2]
+        return QtGui.QImage(frame_bgr.data, w, h, 3 * w, QtGui.QImage.Format_BGR888).copy()
 
     # ---------- Цвет / визуал ----------
 
@@ -490,9 +493,9 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         except RuntimeError:
             return
 
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        h, w, _ = frame_rgb.shape
-        qimg = QtGui.QImage(frame_rgb.data, w, h, 3 * w, QtGui.QImage.Format_RGB888).copy()
+        qimg = self.bgr_to_qimage(frame_bgr)
+        h = qimg.height()
+        w = qimg.width()
 
         painter = QtGui.QPainter(qimg)
 
@@ -534,11 +537,16 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         except RuntimeError as e:
             QtWidgets.QMessageBox.critical(self, "Ошибка", str(e))
             return
-
         self.frame_index = 0
+        try:
+            self.engine.get_background_frame(0)
+        except RuntimeError as e:
+            QtWidgets.QMessageBox.critical(self, "Ошибка видео", str(e))
+            return
+
         self.update_window_title()
         self.update_play_button_state()
-        self.draw_placeholder()
+        self.on_vis_changed(0)
 
     def load_image(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -575,11 +583,11 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         self.open_audio_path(path)
 
     def open_audio_path(self, path: str):
-        try: 
+        try:
             self.engine.load_audio_wav(path)
-
         except Exception as e:
-            pass
+            QtWidgets.QMessageBox.critical(self, "Ошибка аудио", str(e))
+            return
        
 
         if self.player is None:
@@ -686,9 +694,9 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
             self.draw_placeholder()
             return
 
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        h, w, _ = frame_rgb.shape
-        qimg = QtGui.QImage(frame_rgb.data, w, h, 3 * w, QtGui.QImage.Format_RGB888).copy()
+        qimg = self.bgr_to_qimage(frame_bgr)
+        h = qimg.height()
+        w = qimg.width()
 
         painter = QtGui.QPainter(qimg)
         if bars_vec is not None:
@@ -752,17 +760,22 @@ class VideoAudioVisualizer(QtWidgets.QMainWindow):
         prog.setMinimumDuration(0)
         prog.setCancelButton(None)
 
+        last_progress = 0
+
         def progress_callback(i, n):
-            prog.setValue(i)
-            QtWidgets.QApplication.processEvents()
+            nonlocal last_progress
+            if i - last_progress >= 5 or i == n:
+                prog.setValue(i)
+                QtWidgets.QApplication.processEvents()
+                last_progress = i
 
         def overlay_callback(frame_bgr, frame_index, bars_vec):
-            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-            h, w, _ = frame_rgb.shape
-            qimg = QtGui.QImage(frame_rgb.data, w, h, 3 * w, QtGui.QImage.Format_RGB888).copy()
+            qimg = self.bgr_to_qimage(frame_bgr)
+            h = qimg.height()
+            w = qimg.width()
             painter = QtGui.QPainter(qimg)
             if bars_vec is not None:
-                mode = self.combo_vis.currentText()
+                mode = self.ui.combo_vis.currentText()
                 if mode == "Столбцы":
                     self.draw_bars(painter, w, h, bars_vec)
                 else:

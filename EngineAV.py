@@ -29,6 +29,8 @@ class AVVisualizerEngine:
         self.video_path: str | None = None
         self.image_path: str | None = None
         self.audio_path: str | None = None
+        self.audio_path_export: str | None = None
+        self._audio_temp_dir: str | None = None
 
         self.cap: cv2.VideoCapture | None = None
         self.still_image_bgr: np.ndarray | None = None
@@ -46,7 +48,22 @@ class AVVisualizerEngine:
 
     @staticmethod
     def read_wav_mono(path: str) -> tuple[np.ndarray, int]:
-        with wave.open(path, 'rb') as wf:
+        try:
+            return AVVisualizerEngine._read_wav_mono_wave(path)
+        except wave.Error as exc:
+            if "unknown format: 3" not in str(exc):
+                raise
+
+        with tempfile.TemporaryDirectory(prefix="avviz_wav_") as tmp_dir:
+            converted_path = AVVisualizerEngine._convert_wav_to_pcm16_mono(
+                source_path=path,
+                tmp_dir=tmp_dir,
+            )
+            return AVVisualizerEngine._read_wav_mono_wave(converted_path)
+
+    @staticmethod
+    def _read_wav_mono_wave(path: str) -> tuple[np.ndarray, int]:
+        with wave.open(path, "rb") as wf:
             n_channels = wf.getnchannels()
             sr = wf.getframerate()
             n_frames = wf.getnframes()
@@ -85,6 +102,45 @@ class AVVisualizerEngine:
             data = data.mean(axis=1)
 
         return data.astype(np.float32), sr
+
+    @staticmethod
+    def _convert_wav_to_pcm16_mono(source_path: str, tmp_dir: str) -> str:
+        ffmpeg_path = AVVisualizerEngine.find_ffmpeg()
+        if not ffmpeg_path:
+            raise RuntimeError(
+                "FFmpeg not found in PATH. Install FFmpeg to load float WAV files."
+            )
+
+        output_path = os.path.join(tmp_dir, "converted_pcm16_mono.wav")
+        command = [
+            ffmpeg_path,
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            source_path,
+            "-ac",
+            "1",
+            "-ar",
+            "44100",
+            "-c:a",
+            "pcm_s16le",
+            output_path,
+        ]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            detail = f" FFmpeg error: {stderr}" if stderr else ""
+            raise RuntimeError(
+                "FFmpeg failed to convert WAV file to PCM 16-bit mono." + detail
+            )
+
+        return output_path
 
     @staticmethod
     def make_bar_features(
@@ -216,7 +272,24 @@ class AVVisualizerEngine:
         if not path.lower().endswith(".wav"):
             raise ValueError("Поддерживается только WAV (.wav).")
 
-        audio, sr = self.read_wav_mono(path)
+        self._cleanup_audio_temp()
+        export_path = path
+        try:
+            audio, sr = self._read_wav_mono_wave(path)
+        except wave.Error as exc:
+            if "unknown format: 3" not in str(exc):
+                raise
+            tmp_dir = tempfile.mkdtemp(prefix="avviz_wav_")
+            try:
+                converted_path = self._convert_wav_to_pcm16_mono(
+                    source_path=path,
+                    tmp_dir=tmp_dir,
+                )
+                audio, sr = self._read_wav_mono_wave(converted_path)
+            except Exception:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                raise
+            self._audio_temp_dir = tmp_dir
 
         fps = self.fps if (self.cap is not None or self.still_image_bgr is not None) else self.fps_default
 
@@ -224,6 +297,7 @@ class AVVisualizerEngine:
         edges, centers = self.build_bandplan(sr, self.n_bins)
 
         self.audio_path = path
+        self.audio_path_export = export_path
         self.bars = bars
         self.band_edges = edges
         self.band_centers = centers
@@ -268,12 +342,13 @@ class AVVisualizerEngine:
             "C:/ffmpeg/bin/ffmpeg.exe",
         ]
 
-    def find_ffmpeg(self) -> str | None:
+    @staticmethod
+    def find_ffmpeg() -> str | None:
         p = shutil.which("ffmpeg")
         if p:
             return p
 
-        for cand in self._candidate_ffmpeg_paths():
+        for cand in AVVisualizerEngine._candidate_ffmpeg_paths():
             if os.path.isfile(cand) and os.access(cand, os.X_OK):
                 return cand
 
@@ -319,7 +394,8 @@ class AVVisualizerEngine:
     ):
         if (self.cap is None) and (self.still_image_bgr is None):
             raise RuntimeError("Нечего рендерить: не загружено ни видео, ни изображение.")
-        if self.audio_path is None or self.bars is None:
+        audio_source = self.audio_path_export or self.audio_path
+        if audio_source is None or self.bars is None:
             raise RuntimeError("Нет аудио или не рассчитаны бары (self.bars).")
 
         if ffmpeg_bin is None:
@@ -387,7 +463,7 @@ class AVVisualizerEngine:
         cmd = [
             ffmpeg_bin, "-y",
             "-i", tmp_video,
-            "-i", self.audio_path,
+            "-i", audio_source,
             "-map", "0:v:0",
             "-map", "1:a:0",
             "-c:v", "copy",
@@ -404,3 +480,8 @@ class AVVisualizerEngine:
             raise RuntimeError(f"ffmpeg не смог собрать видео с аудио:\n{err[:2000]}") from e
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def _cleanup_audio_temp(self):
+        if self._audio_temp_dir:
+            shutil.rmtree(self._audio_temp_dir, ignore_errors=True)
+            self._audio_temp_dir = None

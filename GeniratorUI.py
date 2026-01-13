@@ -14,6 +14,8 @@ from AImodelTranslate import TranslateAI
 
 
 class SDXLGui(QtWidgets.QWidget):
+    progress_update = QtCore.pyqtSignal(int, float)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Audio Vision — Генератор картинок")
@@ -50,6 +52,15 @@ class SDXLGui(QtWidgets.QWidget):
         self.lbl_status = QtWidgets.QLabel("Инициализация моделей…")
         self.lbl_status.setStyleSheet("color:#aaa")
 
+        self.progress = QtWidgets.QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(True)
+        self.progress.setFormat("Готово: 0%")
+
+        self.lbl_eta = QtWidgets.QLabel("Осталось: —")
+        self.lbl_eta.setStyleSheet("color:#888")
+
         self.preview = QtWidgets.QLabel("Предпросмотр появится здесь")
         self.preview.setAlignment(QtCore.Qt.AlignCenter)
         self.preview.setStyleSheet("background:#111; color:#777; border:1px solid #333;")
@@ -73,11 +84,16 @@ class SDXLGui(QtWidgets.QWidget):
         buttons.addStretch(1)
         buttons.addWidget(self.lbl_status)
 
+        progress_row = QtWidgets.QHBoxLayout()
+        progress_row.addWidget(self.progress, 1)
+        progress_row.addWidget(self.lbl_eta)
+
         main = QtWidgets.QVBoxLayout(self)
         main.addWidget(QtWidgets.QLabel("Промпт:"))
         main.addWidget(self.ed_prompt)
         main.addLayout(grid)
         main.addWidget(self.preview, 1)
+        main.addLayout(progress_row)
         main.addLayout(buttons)
 
         # ---------- Состояние ----------
@@ -92,6 +108,7 @@ class SDXLGui(QtWidgets.QWidget):
         self.btn_generate.clicked.connect(self.on_generate)
         self.cmb_device.currentTextChanged.connect(self.on_device_change)
         self.btn_saveas.clicked.connect(self.savePictureAs)
+        self.progress_update.connect(self._on_progress_update)
 
         # асинхронная инициализация моделей
         self._start_load_models(device=self.cmb_device.currentText())
@@ -181,6 +198,9 @@ class SDXLGui(QtWidgets.QWidget):
         self.lbl_status.setText("Перевод и генерация…")
         self.lbl_status.setStyleSheet("color:#fb0")
         self.preview.setText("Перевод и генерация...")
+        self.progress.setValue(0)
+        self.progress.setFormat("Готово: 0%")
+        self.lbl_eta.setText("Осталось: —")
 
         def run():
             try:
@@ -189,7 +209,25 @@ class SDXLGui(QtWidgets.QWidget):
                 print("PROMPT (EN):", prompt_en)
 
                 # 2) ГЕНЕРАЦИЯ КАРТИНКИ В ЭТОМ ЖЕ ПОТОКЕ
-                result = self.image_ai.run(steps=steps, prompt=prompt_en, w=w, h=h)
+                start_time = time.time()
+
+                def _progress(step_index, total_steps):
+                    steps_done = step_index + 1
+                    percent = int((steps_done / max(total_steps, 1)) * 100)
+                    elapsed = time.time() - start_time
+                    eta = -1.0
+                    if steps_done > 0 and elapsed > 0:
+                        remaining = max(total_steps - steps_done, 0)
+                        eta = (elapsed / steps_done) * remaining
+                    self.progress_update.emit(percent, eta)
+
+                result = self.image_ai.run(
+                    steps=steps,
+                    prompt=prompt_en,
+                    w=w,
+                    h=h,
+                    progress_callback=_progress,
+                )
             except Exception as e:
                 result = (None, str(e))
 
@@ -207,11 +245,13 @@ class SDXLGui(QtWidgets.QWidget):
         self.btn_generate.setEnabled(True)
 
         if err:
+            self.progress_update.emit(0, -1.0)
             self.lbl_status.setText("Ошибка генерации")
             self.lbl_status.setStyleSheet("color:#f55")
             self.preview.setText("Ошибка")
             QtWidgets.QMessageBox.critical(self, "SDXL", f"Не удалось сгенерировать.\n\n{err}")
             return
+        self.progress_update.emit(100, 0.0)
 
         self.lbl_status.setText(f"Готово: {os.path.basename(out_path)}")
         self.lbl_status.setStyleSheet("color:#0a0")
@@ -222,6 +262,27 @@ class SDXLGui(QtWidgets.QWidget):
             self.preview.setPixmap(pix)
         else:
             self.preview.setText("Не удалось открыть изображение")
+
+    @QtCore.pyqtSlot(int, float)
+    def _on_progress_update(self, percent, eta_seconds):
+        percent = max(0, min(100, int(percent)))
+        self.progress.setValue(percent)
+        self.progress.setFormat(f"Готово: {percent}%")
+
+        if eta_seconds is None or eta_seconds < 0:
+            self.lbl_eta.setText("Осталось: —")
+        else:
+            total_seconds = int(eta_seconds + 0.5)
+            m, s = divmod(total_seconds, 60)
+            if m >= 60:
+                h, m = divmod(m, 60)
+                self.lbl_eta.setText(f"Осталось: ~{h:02d}:{m:02d}:{s:02d}")
+            else:
+                self.lbl_eta.setText(f"Осталось: ~{m:02d}:{s:02d}")
+
+        if percent < 100:
+            self.lbl_status.setText(f"Генерация: {percent}%")
+            self.lbl_status.setStyleSheet("color:#fb0")
 
     # ----------- Перезагрузка при смене устройства -----------
     def on_device_change(self, dev):
